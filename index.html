@@ -41,20 +41,28 @@
     <h1>Test Object 1</h1>
     <p>Interactive 3D model</p>
 
-    <model-viewer
-        src="test1.gltf"
-        ios-src="test1.usdz"
-        ar
-        ar-modes="webxr scene-viewer quick-look"
-        camera-controls
-        auto-rotate
-        shadow-intensity="1"
-        exposure="1"
-        alt="3D scanned object">
+    
+<model-viewer
+    src="test1.gltf"
+    ios-src="test1.usdz"
 
-        <button slot="ar-button">
-            View in AR
-        </button>
+    ar
+    ar-modes="scene-viewer webxr quick-look"
+
+    ar-placement="floor"
+
+    camera-controls
+    auto-rotate
+    shadow-intensity="1"
+    exposure="1"
+    alt="3D scanned object">
+
+    <button slot="ar-button">
+        View in AR
+    </button>
+
+</model-viewer>
+
 
     </model-viewer>
 
