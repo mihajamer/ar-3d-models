@@ -2,62 +2,511 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 
-    <title>3D Model - Test 1</title>
+<title>3D AR Viewer</title>
 
-    <script type="module"
-        src="https://ajax.googleapis.com/ajax/libs/model-viewer/4.1.0/model-viewer.min.js">
-    </script>
+<style>
+    body {
+        margin: 0;
+        overflow: hidden;
+        font-family: Arial, sans-serif;
+        background: #eeeeee;
+    }
 
-    <style>
-        body {
-            margin: 0;
-            font-family: Arial, sans-serif;
-            background: #f5f5f5;
-            color: #222;
-            text-align: center;
-        }
+    canvas {
+        display: block;
+    }
 
-        h1 {
-            margin-top: 30px;
-        }
+    #info {
+        position: fixed;
+        bottom: 20px;
+        left: 0;
+        width: 100%;
+        text-align: center;
+        color: #333;
+        font-size: 14px;
+        pointer-events: none;
+        z-index: 2;
+    }
 
-        model-viewer {
-            width: 100%;
-            height: 75vh;
-            background: #f5f5f5;
-        }
+    #status {
+        position: fixed;
+        top: 15px;
+        left: 10px;
+        right: 10px;
+        text-align: center;
+        color: #222;
+        pointer-events: none;
+        z-index: 2;
+    }
 
-        p {
-            color: #666;
-        }
-    </style>
+    #ARButton {
+        bottom: 65px !important;
+    }
+</style>
+
+<script type="importmap">
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+}
+</script>
 </head>
 
 <body>
 
-    <h1>Test Object 1</h1>
-    <p>Interactive 3D model</p>
+<div id="status">Loading 3D model...</div>
+<div id="info">Rotate and explore the 3D model</div>
 
-    <model-viewer
-        src="test1.gltf"
-        ar
-        ar-modes="webxr"
-        camera-controls
-        auto-rotate
-        shadow-intensity="1"
-        exposure="1"
-        alt="3D scanned object">
+<script type="module">
 
-        <button slot="ar-button">
-            View in AR
-        </button>
+import * as THREE from 'three';
 
-    </model-viewer>
+import { ARButton } from
+'three/addons/webxr/ARButton.js';
 
-    <p>Rotate and explore the model, or view it in augmented reality.</p>
+import { GLTFLoader } from
+'three/addons/loaders/GLTFLoader.js';
+
+import { OrbitControls } from
+'three/addons/controls/OrbitControls.js';
+
+// SCENE
+
+const scene = new THREE.Scene();
+
+const camera = new THREE.PerspectiveCamera(
+    70,
+    window.innerWidth / window.innerHeight,
+    0.01,
+    100
+);
+
+const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: true
+});
+
+renderer.setSize(
+    window.innerWidth,
+    window.innerHeight
+);
+
+renderer.setPixelRatio(window.devicePixelRatio);
+
+renderer.xr.enabled = true;
+
+renderer.xr.setReferenceSpaceType('local');
+
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+
+document.body.appendChild(renderer.domElement);
+
+// LIGHTING
+
+scene.add(new THREE.HemisphereLight(
+    0xffffff,
+    0x888888,
+    2
+));
+
+const light = new THREE.DirectionalLight(
+    0xffffff,
+    2
+);
+
+light.position.set(1, 3, 2);
+
+scene.add(light);
+
+// CONTROLS FOR NORMAL 3D VIEW
+
+const controls = new OrbitControls(
+    camera,
+    renderer.domElement
+);
+
+controls.enableDamping = true;
+
+// MODEL
+
+const modelRoot = new THREE.Group();
+
+scene.add(modelRoot);
+
+modelRoot.visible = false;
+
+let modelLoaded = false;
+let placed = false;
+let dragging = false;
+
+const loader = new GLTFLoader();
+
+loader.load(
+    './test1.gltf',
+
+    function (gltf) {
+
+        const model = gltf.scene;
+
+        modelRoot.add(model);
+
+        // Calculate model dimensions
+
+        const box = new THREE.Box3().setFromObject(model);
+
+        const size = box.getSize(new THREE.Vector3());
+
+        const center = box.getCenter(new THREE.Vector3());
+
+        // Center horizontally and put the bottom at y=0
+
+        model.position.x -= center.x;
+        model.position.z -= center.z;
+        model.position.y -= box.min.y;
+
+        // Set up camera for normal 3D preview
+
+        const distance = Math.max(
+            size.x,
+            size.y,
+            size.z,
+            0.5
+        ) * 2.5;
+
+        camera.position.set(
+            distance * 0.7,
+            size.y * 0.8 + distance * 0.2,
+            distance
+        );
+
+        controls.target.set(
+            0,
+            size.y * 0.5,
+            0
+        );
+
+        controls.update();
+
+        modelRoot.visible = true;
+
+        modelLoaded = true;
+
+        document.getElementById('status').textContent =
+            'Model loaded successfully';
+
+    },
+
+    undefined,
+
+    function (error) {
+        console.error(error);
+
+        document.getElementById('status').textContent =
+            'Could not load model. Check GLTF and BIN files.';
+    }
+);
+
+// PLACEMENT RETICLE
+
+const reticle = new THREE.Mesh(
+    new THREE.RingGeometry(0.08, 0.10, 32),
+    new THREE.MeshBasicMaterial({
+        color: 0x00ff88,
+        side: THREE.DoubleSide
+    })
+);
+
+reticle.rotation.x = -Math.PI / 2;
+
+reticle.matrixAutoUpdate = false;
+
+reticle.visible = false;
+
+scene.add(reticle);
+
+const hitPosition = new THREE.Vector3();
+
+// WEBXR HIT TEST VARIABLES
+
+let hitTestSource = null;
+let transientHitTestSource = null;
+let xrSession = null;
+
+// AR BUTTON
+
+const arButton = ARButton.createButton(
+    renderer,
+    {
+        requiredFeatures: ['hit-test'],
+        optionalFeatures: ['dom-overlay'],
+        domOverlay: {
+            root: document.body
+        }
+    }
+);
+
+document.body.appendChild(arButton);
+
+// START AR
+
+renderer.xr.addEventListener(
+    'sessionstart',
+    async function () {
+
+        xrSession = renderer.xr.getSession();
+
+        controls.enabled = false;
+
+        modelRoot.visible = false;
+
+        placed = false;
+        dragging = false;
+
+        document.getElementById('status').textContent =
+            'Point at a surface and tap to place the model';
+
+        try {
+
+            const viewerSpace =
+                await xrSession.requestReferenceSpace('viewer');
+
+            hitTestSource =
+                await xrSession.requestHitTestSource({
+                    space: viewerSpace,
+                    entityTypes: ['plane']
+                });
+
+            if (
+                typeof xrSession.requestHitTestSourceForTransientInput
+                === 'function'
+            ) {
+
+                transientHitTestSource =
+                    await xrSession.requestHitTestSourceForTransientInput({
+                        profile: 'generic-touchscreen',
+                        entityTypes: ['plane']
+                    });
+
+            } else {
+
+                throw new Error(
+                    'Touchscreen hit testing is not supported'
+                );
+
+            }
+
+        } catch (error) {
+
+            console.error(error);
+
+            document.getElementById('status').textContent =
+                'AR dragging is not supported by this browser/device';
+
+        }
+
+        // FIRST TAP = PLACE
+        // SUBSEQUENT TOUCH = START DRAGGING
+
+        xrSession.addEventListener(
+            'selectstart',
+            function () {
+
+                if (!placed) {
+
+                    if (reticle.visible) {
+
+                        reticle.matrix.decompose(
+                            hitPosition,
+                            new THREE.Quaternion(),
+                            new THREE.Vector3()
+                        );
+
+                        modelRoot.position.copy(hitPosition);
+
+                        modelRoot.visible = true;
+
+                        placed = true;
+
+                        document.getElementById('status').textContent =
+                            'Touch and hold anywhere, then drag to move';
+
+                    }
+
+                } else {
+
+                    dragging = true;
+
+                }
+
+            }
+        );
+
+        xrSession.addEventListener(
+            'selectend',
+            function () {
+
+                dragging = false;
+
+            }
+        );
+
+    }
+);
+
+// END AR
+
+renderer.xr.addEventListener(
+    'sessionend',
+    function () {
+
+        if (hitTestSource) {
+            hitTestSource.cancel();
+            hitTestSource = null;
+        }
+
+        if (transientHitTestSource) {
+            transientHitTestSource.cancel();
+            transientHitTestSource = null;
+        }
+
+        xrSession = null;
+
+        placed = false;
+        dragging = false;
+
+        modelRoot.visible = modelLoaded;
+
+        reticle.visible = false;
+
+        controls.enabled = true;
+
+        document.getElementById('status').textContent =
+            '3D model preview';
+
+        document.getElementById('info').textContent =
+            'Rotate and explore the 3D model';
+
+    }
+);
+
+// ANIMATION LOOP
+
+renderer.setAnimationLoop(
+    function (time, frame) {
+
+        if (frame && xrSession) {
+
+            const referenceSpace =
+                renderer.xr.getReferenceSpace();
+
+            // Detect surfaces in front of the camera
+
+            if (hitTestSource) {
+
+                const hits =
+                    frame.getHitTestResults(hitTestSource);
+
+                if (hits.length > 0) {
+
+                    const pose =
+                        hits[0].getPose(referenceSpace);
+
+                    if (pose) {
+
+                        reticle.visible = !placed;
+
+                        reticle.matrix.fromArray(
+                            pose.transform.matrix
+                        );
+
+                    }
+
+                } else {
+
+                    reticle.visible = false;
+
+                }
+
+            }
+
+            // DRAG MODEL USING TOUCHSCREEN HIT TEST
+
+            if (
+                dragging &&
+                transientHitTestSource &&
+                placed
+            ) {
+
+                const results =
+                    frame.getHitTestResultsForTransientInput(
+                        transientHitTestSource
+                    );
+
+                for (const inputResult of results) {
+
+                    if (inputResult.results.length > 0) {
+
+                        const pose =
+                            inputResult.results[0].getPose(
+                                referenceSpace
+                            );
+
+                        if (pose) {
+
+                            modelRoot.position.set(
+                                pose.transform.position.x,
+                                pose.transform.position.y,
+                                pose.transform.position.z
+                            );
+
+                            break;
+
+                        }
+
+                    }
+
+                }
+
+            }
+
+        } else {
+
+            controls.update();
+
+        }
+
+        renderer.render(scene, camera);
+
+    }
+);
+
+// RESIZE
+
+window.addEventListener(
+    'resize',
+    function () {
+
+        camera.aspect =
+            window.innerWidth / window.innerHeight;
+
+        camera.updateProjectionMatrix();
+
+        renderer.setSize(
+            window.innerWidth,
+            window.innerHeight
+        );
+
+    }
+);
+
+</script>
 
 </body>
 </html>
