@@ -33,16 +33,6 @@
         p {
             color: #666;
         }
-
-        #ar-button {
-            background: #222;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            padding: 14px 25px;
-            font-size: 16px;
-            cursor: pointer;
-        }
     </style>
 </head>
 
@@ -53,28 +43,21 @@
 
     <model-viewer
         src="test1.gltf"
-        ios-src="test1.usdz"
-
         ar
-        ar-modes="scene-viewer webxr quick-look"
-
+        ar-modes="webxr scene-viewer quick-look"
         camera-controls
         auto-rotate
-
         shadow-intensity="1"
         exposure="1"
-
         alt="3D scanned object">
 
-        <button id="ar-button" slot="ar-button">
+        <button slot="ar-button">
             View in AR
         </button>
 
     </model-viewer>
 
-    <p>
-        Rotate and explore the model, or view it in augmented reality.
-    </p>
+    <p>Rotate and explore the model, or view it in augmented reality.</p>
 
 </body>
 </html>
