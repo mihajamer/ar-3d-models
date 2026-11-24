@@ -55,5 +55,16 @@
     rooms="false">
   </ar-studio>
 
+
+  <script>
+    // Limit this page to one model at a time.
+    customElements.whenDefined("ar-studio").then(() => {
+      const studio = document.querySelector("ar-studio")?.studio;
+      if (studio) {
+        studio._maxPlacements = 1;
+      }
+    });
+  </script>
+
 </body>
 </html>
