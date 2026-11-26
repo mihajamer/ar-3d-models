@@ -6,27 +6,6 @@
   <meta name="theme-color" content="#f5f5f5">
   <title>Scanned Objects - AR Studio</title>
 
-  <!-- Load the default model into the scene on first visit.
-       The studio reads ?src= and ?title= as documented deep-link parameters. -->
-  <script>
-    (() => {
-      const params = new URLSearchParams(window.location.search);
-      if (!params.has("src")) {
-        params.set("src", "https://mihajamer.github.io/ar-3d-models/test1.glb");
-        params.set("title", "Test Object 1");
-        window.location.replace(
-          window.location.pathname + "?" + params.toString() + window.location.hash
-        );
-      }
-    })();
-  </script>
-
-  <!-- Keep the same browser bundle and custom-element integration as the
-       previously working version. -->
-  <script type="module"
-    src="https://unpkg.com/3d-ar-studio/dist/ar-studio.min.js">
-  </script>
-
   <style>
     * { box-sizing: border-box; }
 
@@ -39,7 +18,7 @@
       background: #0b0b0f;
     }
 
-    ar-studio {
+    #studio {
       display: block;
       width: 100%;
       height: 100vh;
@@ -49,33 +28,47 @@
   </style>
 </head>
 <body>
-  <ar-studio
-    assets="https://mihajamer.github.io/ar-3d-models/models.json"
-    title="Scanned Objects"
-    accent="#2563eb"
-    generate="false"
-    rooms="false">
-  </ar-studio>
+  <div id="studio"></div>
 
-  <script>
-    // The custom element creates its actual studio instance in connectedCallback.
-    // Wait until that instance exists before applying the one-model cap.
-    // requestAnimationFrame avoids the race in which whenDefined() resolves
-    // before the element has finished connecting and assigning element.studio.
-    customElements.whenDefined("ar-studio").then(() => {
-      const element = document.querySelector("ar-studio");
+  <script type="module">
+    import { createArStudio } from "https://unpkg.com/3d-ar-studio@0.3.2/dist/ar-studio.min.js";
 
-      const applyPlacementLimit = () => {
-        if (!element || !element.studio) {
-          requestAnimationFrame(applyPlacementLimit);
-          return;
-        }
+    const studio = createArStudio(document.querySelector("#studio"), {
+      assets: "https://mihajamer.github.io/ar-3d-models/models.json",
+      branding: {
+        title: "Scanned Objects",
+        accent: "#2563eb"
+      },
+      generate: { enabled: false },
+      rooms: { enabled: false },
+      maxPlacements: 1,
+      persist: false,
+      allowUrlOverride: false
+    });
 
-        element.studio.config.maxPlacements = 1;
-        element.studio._maxPlacements = 1;
-      };
+    // The library checks placements.length before awaiting the GLB load.
+    // Reserve a slot immediately so rapid taps cannot start parallel loads.
+    const originalAddModel = studio._addModel.bind(studio);
+    let pendingPlacements = 0;
 
-      requestAnimationFrame(applyPlacementLimit);
+    studio._addModel = async function (...args) {
+      if (this.placements.length + pendingPlacements >= 1) {
+        this._setStatus("Scene is full (1 model). Remove it before adding another.", { warn: true });
+        return null;
+      }
+
+      pendingPlacements += 1;
+      try {
+        return await originalAddModel(...args);
+      } finally {
+        pendingPlacements -= 1;
+      }
+    };
+
+    // Add the initial model through the same guarded path as every later add.
+    studio.addModel({
+      src: "https://mihajamer.github.io/ar-3d-models/test1.glb",
+      title: "Test Object 1"
     });
   </script>
 </body>
