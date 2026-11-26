@@ -117,7 +117,7 @@
         let gesture = null;
         const Vector3 = xr._camera.position.constructor;
         const getModel = () => studio.placements[studio.placements.length - 1] || null;
-        const isHudControl = (target) => !!target?.closest?.("[data-xr-ui]");
+        const isHudControl = (target) => !!target?.closest?.(\n          "button, a, input, select, textarea, [role=\\"button\\"], .ars-dock, .ars-tray, .ars-modal, .ars-top, .ars-selbar"\n        );
 
         function stopEvent(e) {
           e.preventDefault();
