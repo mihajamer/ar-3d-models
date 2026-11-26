@@ -113,6 +113,10 @@
         const root = xr._domOverlayRoot;
         if (!root || xr._arGestureHandlersInstalled) return;
         xr._arGestureHandlersInstalled = true;
+        // The library normally lets empty HUD space pass touches through to its canvas.
+        // Make the full-screen overlay receive background touches during manipulation.
+        root.style.pointerEvents = "auto";
+        xr._session?.addEventListener("end", () => { root.style.pointerEvents = ""; }, { once: true });
 
         let gesture = null;
         const Vector3 = xr._camera.position.constructor;
