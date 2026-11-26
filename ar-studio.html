@@ -99,8 +99,10 @@
 
       const originalArmedContent = studio._armedContent.bind(studio);
       studio._armedContent = function () {
-        if (this.placements.length >= this._maxPlacements) {
-          this._setStatus("Only one model is allowed. Remove it before adding another.", { warn: true });
+        // The catalogue model already exists in the preview scene. Limit only
+        // the number of objects placed into the live XR session, not that source.
+        if ((this.xrSession?.placedCount || 0) >= 1) {
+          this._setStatus("Only one model is allowed in AR.", { warn: true });
           return null;
         }
         return originalArmedContent();
