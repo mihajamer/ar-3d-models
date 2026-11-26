@@ -81,9 +81,17 @@
       // - disable WebGL shadow maps;
       // - omit the studio's separate soft contact-shadow mesh.
       // The studio's normal mobile tier can otherwise use a 1.5x pixel ratio.
-      studio.renderer.setPixelRatio(1);
+      studio.renderer.setPixelRatio(0.8);
       studio.renderer.shadowMap.enabled = false;
       studio._makeShadow = () => null;
+
+      // WebXR uses its own framebuffer; setPixelRatio() above does not lower
+      // immersive-AR resolution. Render XR at 70% linear resolution to reduce
+      // GPU fill-rate cost on mobile (about 49% of the full-resolution pixels).
+      // This must be set before renderer.xr.setSession() is called.
+      if (typeof studio.renderer.xr.setFramebufferScaleFactor === "function") {
+        studio.renderer.xr.setFramebufferScaleFactor(0.7);
+      }
 
       // maxPlacements is checked by the library before its asynchronous GLB
       // load. Reserve the single slot while that load is pending, preventing
