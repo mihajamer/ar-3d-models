@@ -148,8 +148,10 @@
 
           const origin = camera.getWorldPosition(new Vector3());
           const forward = camera.getWorldDirection(new Vector3()).normalize();
-          const right = new Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
-          const up = new Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+          const worldQuaternion = camera.quaternion.clone();
+          camera.getWorldQuaternion(worldQuaternion);
+          const right = new Vector3(1, 0, 0).applyQuaternion(worldQuaternion).normalize();
+          const up = new Vector3(0, 1, 0).applyQuaternion(worldQuaternion).normalize();
           const halfHeight = Math.tan(((camera.fov || 60) * Math.PI / 180) / 2);
           const direction = forward
             .addScaledVector(right, ndcX * halfHeight * (rect.width / rect.height))
