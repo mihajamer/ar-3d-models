@@ -21,10 +21,6 @@
     })();
   </script>
 
-  <script type="module"
-    src="https://unpkg.com/3d-ar-studio/dist/ar-studio.min.js">
-  </script>
-
   <style>
     * { box-sizing: border-box; }
 
@@ -37,7 +33,7 @@
       background: #0b0b0f;
     }
 
-    ar-studio {
+    #studio {
       display: block;
       width: 100%;
       height: 100vh;
@@ -47,24 +43,22 @@
   </style>
 </head>
 <body>
-  <ar-studio
-    assets="https://mihajamer.github.io/ar-3d-models/models.json"
-    title="Scanned Objects"
-    accent="#2563eb"
-    generate="false"
-    rooms="false">
-  </ar-studio>
+  <div id="studio"></div>
 
+  <script type="module">
+    import { createArStudio } from "https://esm.sh/3d-ar-studio@0.3.2?bundle";
 
-  <script>
-    // Limit this page to one model at a time.
-    customElements.whenDefined("ar-studio").then(() => {
-      const studio = document.querySelector("ar-studio")?.studio;
-      if (studio) {
-        studio._maxPlacements = 1;
-      }
+    createArStudio(document.querySelector("#studio"), {
+      assets: "https://mihajamer.github.io/ar-3d-models/models.json",
+      branding: {
+        title: "Scanned Objects",
+        accent: "#2563eb"
+      },
+      generate: { enabled: false },
+      rooms: { enabled: false },
+      maxPlacements: 1,
+      persist: false
     });
   </script>
-
 </body>
 </html>
