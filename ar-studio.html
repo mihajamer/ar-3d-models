@@ -53,7 +53,7 @@
 </head>
 <body>
   <div id="studio"></div>
-  <div id="version-label">AR Studio · Version 1</div>
+  <div id="version-label">AR Studio · Version 2</div>
   <div id="startup-error" hidden></div>
 
   <script type="module">
@@ -76,16 +76,44 @@
         throw new Error("The AR Studio bundle loaded, but createArStudio was not exported.");
       }
 
-      const studio = createArStudio(document.querySelector("#studio"), {
-        assets: "https://mihajamer.github.io/ar-3d-models/models.json",
-        branding: { title: "Scanned Objects", accent: "#2563eb" },
-        generate: { enabled: false },
-        rooms: { enabled: false },
-        animations: { enabled: false },
-        maxPlacements: 1,
-        persist: false,
-        allowUrlOverride: false
-      });
+      // Create the WebGL context with multisampling disabled. In Three.js this
+      // attribute is also used when WebXR creates its projection layer.
+      const canvasPrototype = HTMLCanvasElement.prototype;
+      const originalGetContext = canvasPrototype.getContext;
+      let studio;
+      canvasPrototype.getContext = function (type, attributes) {
+        if (type === "webgl2" || type === "webgl" || type === "experimental-webgl") {
+          return originalGetContext.call(this, type, {
+            ...(attributes || {}),
+            antialias: false,
+            powerPreference: "high-performance"
+          });
+        }
+        return originalGetContext.call(this, type, attributes);
+      };
+
+      try {
+        studio = createArStudio(document.querySelector("#studio"), {
+          assets: "https://mihajamer.github.io/ar-3d-models/models.json",
+          branding: { title: "Scanned Objects", accent: "#2563eb" },
+          generate: { enabled: false },
+          rooms: { enabled: false },
+          animations: { enabled: false },
+          lighting: { preset: null },
+          maxPlacements: 1,
+          persist: false,
+          allowUrlOverride: false
+        });
+      } finally {
+        canvasPrototype.getContext = originalGetContext;
+      }
+
+      const actualContextAttributes = studio.renderer.getContext().getContextAttributes?.();
+      console.info("AR Studio WebGL context attributes:", actualContextAttributes);
+
+      // The procedural room environment is not needed for this scanned,
+      // non-metallic model. Skip the remote HDRI and use the simple scene lights.
+      studio.scene.environment = null;
 
       // Keep the regular preview lightweight.
       studio.renderer.setPixelRatio(0.8);
@@ -94,7 +122,7 @@
 
       // WebXR has a separate framebuffer scale from the regular renderer.
       if (typeof studio.renderer.xr.setFramebufferScaleFactor === "function") {
-        studio.renderer.xr.setFramebufferScaleFactor(0.7);
+        studio.renderer.xr.setFramebufferScaleFactor(0.6);
       }
 
       // Reserve the only model slot while an asynchronous model load is pending.
@@ -145,6 +173,32 @@
         // drawing, so the anchor can keep tracking the room without undoing
         // the user's deliberate repositioning.
         const renderer = xr._renderer;
+
+        // Small live diagnostic: lets us compare real XR frame rate and the
+        // actual draw workload on the phone rather than guessing from feel.
+        let perfBadge = root.querySelector("#ar-performance");
+        if (!perfBadge) {
+          perfBadge = document.createElement("div");
+          perfBadge.id = "ar-performance";
+          Object.assign(perfBadge.style, {
+            position: "absolute",
+            top: "calc(env(safe-area-inset-top, 0px) + 10px)",
+            right: "10px",
+            zIndex: "99999",
+            padding: "6px 8px",
+            borderRadius: "7px",
+            background: "rgba(0,0,0,0.68)",
+            color: "#fff",
+            font: "11px/1.25 Arial, sans-serif",
+            pointerEvents: "none",
+            whiteSpace: "nowrap"
+          });
+          perfBadge.textContent = "FPS: measuring…";
+          root.appendChild(perfBadge);
+        }
+        let perfFrames = 0;
+        let perfWindowStart = performance.now();
+
         const originalRender = renderer.render;
         const anchoredRender = function (scene, camera) {
           const shifted = [];
@@ -158,7 +212,22 @@
             }
           }
           try {
-            return originalRender.call(this, scene, camera);
+            const result = originalRender.call(this, scene, camera);
+            const now = performance.now();
+            perfFrames += 1;
+            if (now - perfWindowStart >= 1000) {
+              const fps = Math.round(perfFrames * 1000 / (now - perfWindowStart));
+              const stats = renderer.info?.render;
+              const calls = stats?.calls ?? "?";
+              const triangles = stats?.triangles;
+              const triangleLabel = Number.isFinite(triangles)
+                ? `${Math.round(triangles / 1000)}k tris`
+                : "tris ?";
+              perfBadge.textContent = `${fps} FPS · ${calls} calls · ${triangleLabel}`;
+              perfFrames = 0;
+              perfWindowStart = now;
+            }
+            return result;
           } finally {
             // Keep anchor-space positions untouched between frames. Offsets
             // exist only for the actual draw, so repeated renders cannot
@@ -172,6 +241,7 @@
         renderer.render = anchoredRender;
         xr._session?.addEventListener("end", () => {
           if (renderer.render === anchoredRender) renderer.render = originalRender;
+          perfBadge?.remove();
         }, { once: true });
         const getModel = () => studio.placements[studio.placements.length - 1] || null;
         const isHudControl = (target) => !!target?.closest?.(
@@ -381,6 +451,18 @@
         // The scanned object is static: no per-frame mixer/idle animation work.
         xr._onFrame = null;
 
+        // The contact shadow is another transparent draw over the camera view.
+        // Remove it after placement; this single-object viewer does not need it.
+        for (const placement of xr._placements || []) {
+          const shadow = placement.shadow;
+          if (!shadow) continue;
+          xr._scene.remove(shadow);
+          shadow.geometry?.dispose?.();
+          if (Array.isArray(shadow.material)) shadow.material.forEach((m) => m.dispose?.());
+          else shadow.material?.dispose?.();
+          placement.shadow = null;
+        }
+
         // Depth processing and real-world light estimation are not needed for
         // this simple single-object viewer.
         if (xr._depthOcclusion) {
@@ -398,6 +480,24 @@
 
       // Do not even request optional depth-sensing or light-estimation features.
       // This prevents the AR runtime from enabling those optional pipelines.
+      // Blur/translucency effects on the floating controls can trigger costly
+      // mobile compositing over the live camera image. Keep the controls, drop
+      // the expensive visual effects while immersive AR is active.
+      const arPerformanceStyle = document.createElement("style");
+      arPerformanceStyle.textContent = `
+        .ars-root.is-xr .ars-hud *,
+        .ars-root.is-xr .ars-hud *::before,
+        .ars-root.is-xr .ars-hud *::after {
+          -webkit-backdrop-filter: none !important;
+          backdrop-filter: none !important;
+          box-shadow: none !important;
+          text-shadow: none !important;
+          filter: none !important;
+          transition: none !important;
+        }
+      `;
+      document.head.appendChild(arPerformanceStyle);
+
       const originalToggleXR = studio._toggleXR.bind(studio);
       studio._toggleXR = async function (...args) {
         const xrApi = navigator.xr;
