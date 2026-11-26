@@ -122,6 +122,28 @@
 
         let gesture = null;
         const Vector3 = xr._camera.position.constructor;
+
+        // MultiPlaceSession refreshes anchored positions during _tick().
+        // Apply user drag offsets after that refresh but immediately before
+        // drawing, so the anchor can keep tracking the room without undoing
+        // the user's deliberate repositioning.
+        const renderer = xr._renderer;
+        const originalRender = renderer.render;
+        const anchoredRender = function (scene, camera) {
+          if (scene === xr._scene && !xr._ended) {
+            for (const item of xr._placements || []) {
+              const offset = item._userOffset;
+              if (!offset || offset.lengthSq() === 0) continue;
+              item.group.position.add(offset);
+              if (item.shadow) item.shadow.position.add(offset);
+            }
+          }
+          return originalRender.call(this, scene, camera);
+        };
+        renderer.render = anchoredRender;
+        xr._session?.addEventListener("end", () => {
+          if (renderer.render === anchoredRender) renderer.render = originalRender;
+        }, { once: true });
         const getModel = () => studio.placements[studio.placements.length - 1] || null;
         const isHudControl = (target) => !!target?.closest?.(
           'button, a, input, select, textarea, [role="button"], .ars-dock, .ars-tray, .ars-modal, .ars-top, .ars-selbar'
@@ -191,7 +213,14 @@
           }
 
           const group = model.group;
+          const xrPlacement = xr._placements?.find((item) => item.group === group);
+          if (!xrPlacement) {
+            gesture = null;
+            return;
+          }
+          if (!xrPlacement._userOffset) xrPlacement._userOffset = new Vector3();
           const startPosition = group.position.clone();
+          const startOffset = xrPlacement._userOffset.clone();
           const floorY = startPosition.y;
           const isTransform = touches.length === 2;
           const midpointX = isTransform
@@ -203,8 +232,10 @@
 
           gesture = {
             model,
+            xrPlacement,
             mode: isTransform ? "transform" : "drag",
             startPosition,
+            startOffset,
             floorY,
             startHit: isTransform ? null : intersectFloor(midpointX, midpointY, floorY),
             startScale: group.scale.x,
@@ -240,8 +271,12 @@
             );
             if (!currentHit) return;
 
-            group.position.copy(gesture.startPosition)
-              .add(currentHit.sub(gesture.startHit));
+            const movement = currentHit.sub(gesture.startHit);
+            // The XR runtime rewrites group.position from its anchor every
+            // frame. Store the user's movement as an offset and apply it
+            // immediately before rendering, after the anchor pose is updated.
+            gesture.xrPlacement._userOffset.copy(gesture.startOffset).add(movement);
+            group.position.copy(gesture.startPosition).add(movement);
             group.position.y = gesture.floorY;
           } else {
             const ratio = touchDistance(e.touches) / gesture.startDistance;
@@ -270,6 +305,14 @@
             return;
           }
 
+          // Keep the final moved position in the scene data as well as in
+          // the render-time anchor offset.
+          if (gesture.mode === "drag" && gesture.startHit && gesture.xrPlacement._userOffset) {
+            const finalOffset = gesture.xrPlacement._userOffset;
+            gesture.model.group.position.copy(gesture.startPosition)
+              .add(finalOffset.clone().sub(gesture.startOffset));
+            gesture.model.group.position.y = gesture.floorY;
+          }
           gesture = null;
           xr._uiTouchActive = false;
           xr._pinch.active = false;
@@ -382,14 +425,8 @@
         };
       };
 
-      const firstPlacement = await studio.addModel({
-        src: "https://mihajamer.github.io/ar-3d-models/test1.glb",
-        title: "Test Object 1"
-      });
-
-      if (!firstPlacement) {
-        console.warn("The initial model was not placed. Check the model URL and CORS response.");
-      }
+      // Start with an empty scene. The user chooses the model from the catalogue
+      // and places it only after aiming at the desired surface in AR.
     } catch (error) {
       showStartupError(error);
     }
