@@ -93,6 +93,32 @@
         studio.renderer.xr.setFramebufferScaleFactor(0.7);
       }
 
+      // AR Studio adds a separate contact-shadow mesh for every WebXR
+      // placement. Hide those meshes as well: renderer.shadowMap=false does
+      // not disable these custom transparent planes. Also stop updating the
+      // optional depth-occlusion pass after the session has started.
+      const originalToggleXR = studio._toggleXR.bind(studio);
+      studio._toggleXR = async function (...args) {
+        await originalToggleXR(...args);
+        const xr = this.xrSession;
+        if (!xr) return;
+
+        if (xr._depthOcclusion) {
+          xr._depthOcclusion.dispose();
+          xr._depthOcclusion = null;
+        }
+
+        for (const placement of xr._placements || []) {
+          if (placement.shadow) placement.shadow.visible = false;
+        }
+        const buildShadow = xr._buildShadow.bind(xr);
+        xr._buildShadow = function () {
+          const shadow = buildShadow();
+          shadow.visible = false;
+          return shadow;
+        };
+      };
+
       // maxPlacements is checked by the library before its asynchronous GLB
       // load. Reserve the single slot while that load is pending, preventing
       // rapid taps from starting multiple model loads simultaneously.
