@@ -22,6 +22,22 @@
       height: 100dvh;
       min-height: 70vh;
     }
+    #version-label {
+      position: fixed;
+      z-index: 99998;
+      top: calc(10px + env(safe-area-inset-top));
+      left: calc(10px + env(safe-area-inset-left));
+      padding: 7px 10px;
+      border: 1px solid rgba(255,255,255,0.22);
+      border-radius: 8px;
+      background: rgba(12, 16, 25, 0.82);
+      color: #fff;
+      font: 600 12px/1.2 Arial, sans-serif;
+      letter-spacing: 0.2px;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-select: none;
+    }
     #startup-error {
       position: fixed;
       z-index: 99999;
@@ -37,6 +53,7 @@
 </head>
 <body>
   <div id="studio"></div>
+  <div id="version-label">AR Studio · Version 1</div>
   <div id="startup-error" hidden></div>
 
   <script type="module">
