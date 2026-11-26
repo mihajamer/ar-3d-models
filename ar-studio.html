@@ -21,6 +21,12 @@
     })();
   </script>
 
+  <!-- Keep the same browser bundle and custom-element integration as the
+       previously working version. -->
+  <script type="module"
+    src="https://unpkg.com/3d-ar-studio/dist/ar-studio.min.js">
+  </script>
+
   <style>
     * { box-sizing: border-box; }
 
@@ -33,7 +39,7 @@
       background: #0b0b0f;
     }
 
-    #studio {
+    ar-studio {
       display: block;
       width: 100%;
       height: 100vh;
@@ -43,21 +49,33 @@
   </style>
 </head>
 <body>
-  <div id="studio"></div>
+  <ar-studio
+    assets="https://mihajamer.github.io/ar-3d-models/models.json"
+    title="Scanned Objects"
+    accent="#2563eb"
+    generate="false"
+    rooms="false">
+  </ar-studio>
 
-  <script type="module">
-    import { createArStudio } from "https://unpkg.com/3d-ar-studio@0.3.2/dist/ar-studio.min.js";
+  <script>
+    // The custom element creates its actual studio instance in connectedCallback.
+    // Wait until that instance exists before applying the one-model cap.
+    // requestAnimationFrame avoids the race in which whenDefined() resolves
+    // before the element has finished connecting and assigning element.studio.
+    customElements.whenDefined("ar-studio").then(() => {
+      const element = document.querySelector("ar-studio");
 
-    createArStudio(document.querySelector("#studio"), {
-      assets: "https://mihajamer.github.io/ar-3d-models/models.json",
-      branding: {
-        title: "Scanned Objects",
-        accent: "#2563eb"
-      },
-      generate: { enabled: false },
-      rooms: { enabled: false },
-      maxPlacements: 1,
-      persist: false
+      const applyPlacementLimit = () => {
+        if (!element || !element.studio) {
+          requestAnimationFrame(applyPlacementLimit);
+          return;
+        }
+
+        element.studio.config.maxPlacements = 1;
+        element.studio._maxPlacements = 1;
+      };
+
+      requestAnimationFrame(applyPlacementLimit);
     });
   </script>
 </body>
