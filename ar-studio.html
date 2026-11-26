@@ -115,6 +115,7 @@
         xr._arGestureHandlersInstalled = true;
 
         let gesture = null;
+        const Vector3 = xr._camera.position.constructor;
         const getModel = () => studio.placements[studio.placements.length - 1] || null;
         const isHudControl = (target) => !!target?.closest?.("[data-xr-ui]");
 
@@ -127,8 +128,8 @@
         function getWorldPerPixel(model) {
           const camera = xr._camera;
           camera.updateMatrixWorld(true);
-          const cameraPos = camera.getWorldPosition(new THREE.Vector3());
-          const modelPos = model.group.getWorldPosition(new THREE.Vector3());
+          const cameraPos = camera.getWorldPosition(new Vector3());
+          const modelPos = model.group.getWorldPosition(new Vector3());
           const distance = Math.max(0.35, cameraPos.distanceTo(modelPos));
           const fov = (camera.fov || 60) * Math.PI / 180;
           return (2 * distance * Math.tan(fov / 2)) / Math.max(1, root.clientHeight);
@@ -176,7 +177,7 @@
             const dx = e.touches[0].clientX - gesture.startX;
             const dy = e.touches[0].clientY - gesture.startY;
             const camera = xr._camera;
-            const forward = camera.getWorldDirection(new THREE.Vector3());
+            const forward = camera.getWorldDirection(new Vector3());
             forward.y = 0;
             if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
             forward.normalize();
@@ -193,6 +194,7 @@
             const scale = Math.max(0.05, Math.min(5, gesture.startScale * distance / Math.max(1, gesture.startDistance)));
             group.scale.setScalar(scale);
             group.rotation.y = gesture.startYaw + angle - gesture.startAngle;
+            gesture.model.yaw = group.rotation.y;
           }
         }
 
