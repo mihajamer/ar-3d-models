@@ -130,15 +130,27 @@
         const renderer = xr._renderer;
         const originalRender = renderer.render;
         const anchoredRender = function (scene, camera) {
+          const shifted = [];
           if (scene === xr._scene && !xr._ended) {
             for (const item of xr._placements || []) {
               const offset = item._userOffset;
               if (!offset || offset.lengthSq() === 0) continue;
               item.group.position.add(offset);
               if (item.shadow) item.shadow.position.add(offset);
+              shifted.push(item);
             }
           }
-          return originalRender.call(this, scene, camera);
+          try {
+            return originalRender.call(this, scene, camera);
+          } finally {
+            // Keep anchor-space positions untouched between frames. Offsets
+            // exist only for the actual draw, so repeated renders cannot
+            // accumulate the same translation.
+            for (const item of shifted) {
+              item.group.position.sub(item._userOffset);
+              if (item.shadow) item.shadow.position.sub(item._userOffset);
+            }
+          }
         };
         renderer.render = anchoredRender;
         xr._session?.addEventListener("end", () => {
@@ -155,40 +167,36 @@
           e.stopImmediatePropagation();
         }
 
-        // Build a world-space ray through a screen touch, then intersect it
-        // with the model's fixed horizontal floor plane. This avoids the
-        // camera-relative pixel-delta movement that caused the model to jump.
-        function screenRay(clientX, clientY) {
-          const canvas = xr._renderer.domElement;
-          const rect = canvas.getBoundingClientRect();
-          if (!rect.width || !rect.height) return null;
+        // Use screen-space finger displacement mapped through a fixed,
+        // horizontal camera basis captured when the gesture begins. Do not
+        // unproject touches with xr._camera: Three.js uses an XR ArrayCamera
+        // whose fov does not represent the actual headset/phone projection.
+        function dragBasis(model, rect) {
+          const xrCamera = xr._renderer.xr.getCamera(xr._camera);
+          const viewCamera = xrCamera.cameras?.[0] || xrCamera;
+          viewCamera.updateMatrixWorld(true);
+          const position = viewCamera.getWorldPosition(new Vector3());
+          const quaternion = viewCamera.getWorldQuaternion(viewCamera.quaternion.clone());
+          const right = new Vector3(1, 0, 0).applyQuaternion(quaternion);
+          right.y = 0;
+          if (right.lengthSq() < 1e-6) return null;
+          right.normalize();
 
-          const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
-          const ndcY = 1 - ((clientY - rect.top) / rect.height) * 2;
-          const camera = xr._camera;
-          camera.updateMatrixWorld(true);
+          const screenUp = new Vector3(0, 1, 0).applyQuaternion(quaternion);
+          screenUp.y = 0;
+          if (screenUp.lengthSq() < 1e-6) {
+            screenUp.copy(new Vector3(0, 0, -1).applyQuaternion(quaternion));
+            screenUp.y = 0;
+          }
+          if (screenUp.lengthSq() < 1e-6) return null;
+          screenUp.normalize();
 
-          const origin = camera.getWorldPosition(new Vector3());
-          const forward = camera.getWorldDirection(new Vector3()).normalize();
-          const worldQuaternion = camera.quaternion.clone();
-          camera.getWorldQuaternion(worldQuaternion);
-          const right = new Vector3(1, 0, 0).applyQuaternion(worldQuaternion).normalize();
-          const up = new Vector3(0, 1, 0).applyQuaternion(worldQuaternion).normalize();
-          const halfHeight = Math.tan(((camera.fov || 60) * Math.PI / 180) / 2);
-          const direction = forward
-            .addScaledVector(right, ndcX * halfHeight * (rect.width / rect.height))
-            .addScaledVector(up, ndcY * halfHeight)
-            .normalize();
-
-          return { origin, direction };
-        }
-
-        function intersectFloor(clientX, clientY, floorY) {
-          const ray = screenRay(clientX, clientY);
-          if (!ray || Math.abs(ray.direction.y) < 1e-4) return null;
-          const distance = (floorY - ray.origin.y) / ray.direction.y;
-          if (distance <= 0) return null;
-          return ray.origin.addScaledVector(ray.direction, distance);
+          const forward = new Vector3(0, 0, -1).applyQuaternion(quaternion).normalize();
+          const toModel = model.group.position.clone().sub(position);
+          const depth = Math.max(0.25, toModel.dot(forward));
+          const projectionY = Math.abs(viewCamera.projectionMatrix.elements[5]) || 1.7;
+          const metresPerPixel = (2 * depth) / (projectionY * Math.max(1, rect.height));
+          return { right, screenUp, metresPerPixel };
         }
 
         function touchDistance(touches) {
@@ -223,12 +231,8 @@
           const startOffset = xrPlacement._userOffset.clone();
           const floorY = startPosition.y;
           const isTransform = touches.length === 2;
-          const midpointX = isTransform
-            ? (touches[0].clientX + touches[1].clientX) / 2
-            : touches[0].clientX;
-          const midpointY = isTransform
-            ? (touches[0].clientY + touches[1].clientY) / 2
-            : touches[0].clientY;
+          const overlayRect = root.getBoundingClientRect();
+          const drag = !isTransform ? dragBasis(model, overlayRect) : null;
 
           gesture = {
             model,
@@ -237,7 +241,9 @@
             startPosition,
             startOffset,
             floorY,
-            startHit: isTransform ? null : intersectFloor(midpointX, midpointY, floorY),
+            startX: touches[0].clientX,
+            startY: touches[0].clientY,
+            drag,
             startScale: group.scale.x,
             startYaw: group.rotation.y,
             startDistance: isTransform ? Math.max(1, touchDistance(touches)) : 1,
@@ -263,21 +269,17 @@
           const group = gesture.model.group;
 
           if (gesture.mode === "drag") {
-            if (!gesture.startHit) return;
-            const currentHit = intersectFloor(
-              e.touches[0].clientX,
-              e.touches[0].clientY,
-              gesture.floorY
-            );
-            if (!currentHit) return;
-
-            const movement = currentHit.sub(gesture.startHit);
-            // The XR runtime rewrites group.position from its anchor every
-            // frame. Store the user's movement as an offset and apply it
-            // immediately before rendering, after the anchor pose is updated.
+            if (!gesture.drag) return;
+            const dx = e.touches[0].clientX - gesture.startX;
+            const dy = e.touches[0].clientY - gesture.startY;
+            const movement = gesture.drag.right.clone()
+              .multiplyScalar(dx * gesture.drag.metresPerPixel)
+              .addScaledVector(gesture.drag.screenUp, -dy * gesture.drag.metresPerPixel);
+            movement.y = 0;
+            // Translation is derived only from finger displacement since
+            // touchstart, using a frozen world-space basis. Phone/camera
+            // tracking updates therefore cannot make the object jump.
             gesture.xrPlacement._userOffset.copy(gesture.startOffset).add(movement);
-            group.position.copy(gesture.startPosition).add(movement);
-            group.position.y = gesture.floorY;
           } else {
             const ratio = touchDistance(e.touches) / gesture.startDistance;
             const scale = Math.max(0.05, Math.min(5, gesture.startScale * ratio));
@@ -305,19 +307,20 @@
             return;
           }
 
-          // Keep the final moved position in the scene data as well as in
-          // the render-time anchor offset.
-          if (gesture.mode === "drag" && gesture.startHit && gesture.xrPlacement._userOffset) {
-            const finalOffset = gesture.xrPlacement._userOffset;
-            gesture.model.group.position.copy(gesture.startPosition)
-              .add(finalOffset.clone().sub(gesture.startOffset));
-            gesture.model.group.position.y = gesture.floorY;
+          // Persist the translated world position without changing the
+          // anchor-space base position used by the XR tracking loop.
+          if (gesture.mode === "drag" && gesture.xrPlacement._userOffset) {
+            const offset = gesture.xrPlacement._userOffset;
+            gesture.model.group.position.add(offset);
+            try { studio._saveScene(); }
+            finally { gesture.model.group.position.sub(offset); }
+          } else {
+            studio._saveScene();
           }
           gesture = null;
           xr._uiTouchActive = false;
           xr._pinch.active = false;
           xr._pinchEndedAt = performance.now();
-          studio._saveScene();
         }
 
         root.addEventListener("touchstart", onStart, { capture: true, passive: false });
