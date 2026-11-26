@@ -109,6 +109,21 @@
         }
       };
 
+      // WebXR floor taps use a separate synchronous path: _armedContent()
+      // creates placements directly and does not call _addModel(). Guard that
+      // path too, so the first floor tap consumes the only allowed slot.
+      const originalArmedContent = studio._armedContent.bind(studio);
+      studio._armedContent = function () {
+        if (this.placements.length >= this._maxPlacements) {
+          this._setStatus(
+            "Only one model can be placed. Remove it before placing another.",
+            { warn: true }
+          );
+          return null;
+        }
+        return originalArmedContent();
+      };
+
       // Use the same guarded path as the Add tray for the first model.
       const firstPlacement = await studio.addModel({
         src: "https://mihajamer.github.io/ar-3d-models/test1.glb",
