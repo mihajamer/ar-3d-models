@@ -55,7 +55,7 @@
       // Dynamic import lets us show a useful error instead of a completely
       // blank page if the CDN bundle cannot be downloaded or evaluated.
       const { createArStudio } = await import(
-        "https://unpkg.com/3d-ar-studio@0.3.2/dist/ar-studio.min.js"
+        "https://unpkg.com/3d-ar-studio@0.3.1/dist/ar-studio.min.js"
       );
 
       if (typeof createArStudio !== "function") {
@@ -71,7 +71,6 @@
         generate: { enabled: false },
         rooms: { enabled: false },
         animations: { enabled: false },
-        lighting: { preset: null },
         maxPlacements: 1,
         persist: false,
         allowUrlOverride: false
