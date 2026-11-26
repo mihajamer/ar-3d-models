@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f5f5f5">
   <title>Scanned Objects - AR Studio</title>
-
   <style>
     * { box-sizing: border-box; }
     html, body {
@@ -52,8 +51,6 @@
     }
 
     try {
-      // Dynamic import lets us show a useful error instead of a completely
-      // blank page if the CDN bundle cannot be downloaded or evaluated.
       const { createArStudio } = await import(
         "https://unpkg.com/3d-ar-studio@0.3.1/dist/ar-studio.min.js"
       );
@@ -64,10 +61,7 @@
 
       const studio = createArStudio(document.querySelector("#studio"), {
         assets: "https://mihajamer.github.io/ar-3d-models/models.json",
-        branding: {
-          title: "Scanned Objects",
-          accent: "#2563eb"
-        },
+        branding: { title: "Scanned Objects", accent: "#2563eb" },
         generate: { enabled: false },
         rooms: { enabled: false },
         animations: { enabled: false },
@@ -76,65 +70,25 @@
         allowUrlOverride: false
       });
 
-      // Mobile rendering budget:
-      // - cap the drawing buffer at the screen's native CSS resolution;
-      // - disable WebGL shadow maps;
-      // - omit the studio's separate soft contact-shadow mesh.
-      // The studio's normal mobile tier can otherwise use a 1.5x pixel ratio.
+      // Keep the regular preview lightweight.
       studio.renderer.setPixelRatio(0.8);
       studio.renderer.shadowMap.enabled = false;
       studio._makeShadow = () => null;
 
-      // WebXR uses its own framebuffer; setPixelRatio() above does not lower
-      // immersive-AR resolution. Render XR at 70% linear resolution to reduce
-      // GPU fill-rate cost on mobile (about 49% of the full-resolution pixels).
-      // This must be set before renderer.xr.setSession() is called.
+      // WebXR has a separate framebuffer scale from the regular renderer.
       if (typeof studio.renderer.xr.setFramebufferScaleFactor === "function") {
         studio.renderer.xr.setFramebufferScaleFactor(0.7);
       }
 
-      // AR Studio adds a separate contact-shadow mesh for every WebXR
-      // placement. Hide those meshes as well: renderer.shadowMap=false does
-      // not disable these custom transparent planes. Also stop updating the
-      // optional depth-occlusion pass after the session has started.
-      const originalToggleXR = studio._toggleXR.bind(studio);
-      studio._toggleXR = async function (...args) {
-        await originalToggleXR(...args);
-        const xr = this.xrSession;
-        if (!xr) return;
-
-        if (xr._depthOcclusion) {
-          xr._depthOcclusion.dispose();
-          xr._depthOcclusion = null;
-        }
-
-        for (const placement of xr._placements || []) {
-          if (placement.shadow) placement.shadow.visible = false;
-        }
-        const buildShadow = xr._buildShadow.bind(xr);
-        xr._buildShadow = function () {
-          const shadow = buildShadow();
-          shadow.visible = false;
-          return shadow;
-        };
-      };
-
-      // maxPlacements is checked by the library before its asynchronous GLB
-      // load. Reserve the single slot while that load is pending, preventing
-      // rapid taps from starting multiple model loads simultaneously.
+      // Reserve the only model slot while an asynchronous model load is pending.
       const originalAddModel = studio._addModel.bind(studio);
       let pendingPlacements = 0;
-
       studio._addModel = async function (model, options) {
         const limit = this._maxPlacements;
         if (this.placements.length + pendingPlacements >= limit) {
-          this._setStatus(
-            "Scene is full (1 model). Remove it before adding another.",
-            { warn: true }
-          );
+          this._setStatus("Only one model is allowed. Remove it before adding another.", { warn: true });
           return null;
         }
-
         pendingPlacements += 1;
         try {
           return await originalAddModel(model, options);
@@ -143,22 +97,222 @@
         }
       };
 
-      // WebXR floor taps use a separate synchronous path: _armedContent()
-      // creates placements directly and does not call _addModel(). Guard that
-      // path too, so the first floor tap consumes the only allowed slot.
       const originalArmedContent = studio._armedContent.bind(studio);
       studio._armedContent = function () {
         if (this.placements.length >= this._maxPlacements) {
-          this._setStatus(
-            "Only one model can be placed. Remove it before placing another.",
-            { warn: true }
-          );
+          this._setStatus("Only one model is allowed. Remove it before adding another.", { warn: true });
           return null;
         }
         return originalArmedContent();
       };
 
-      // Use the same guarded path as the Add tray for the first model.
+      // Add direct manipulation for the one placed model in immersive AR:
+      // one finger drags it across the horizontal floor plane; two fingers
+      // scale and rotate it. HUD controls retain their normal behaviour.
+      function installArGestures(xr) {
+        const root = xr._domOverlayRoot;
+        if (!root || xr._arGestureHandlersInstalled) return;
+        xr._arGestureHandlersInstalled = true;
+
+        let gesture = null;
+        const getModel = () => studio.placements[studio.placements.length - 1] || null;
+        const isHudControl = (target) => !!target?.closest?.("[data-xr-ui]");
+
+        function stopEvent(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          e.stopImmediatePropagation();
+        }
+
+        function getWorldPerPixel(model) {
+          const camera = xr._camera;
+          camera.updateMatrixWorld(true);
+          const cameraPos = camera.getWorldPosition(new THREE.Vector3());
+          const modelPos = model.group.getWorldPosition(new THREE.Vector3());
+          const distance = Math.max(0.35, cameraPos.distanceTo(modelPos));
+          const fov = (camera.fov || 60) * Math.PI / 180;
+          return (2 * distance * Math.tan(fov / 2)) / Math.max(1, root.clientHeight);
+        }
+
+        function touchAngle(touches) {
+          return Math.atan2(
+            touches[1].clientY - touches[0].clientY,
+            touches[1].clientX - touches[0].clientX
+          );
+        }
+
+        function onStart(e) {
+          if (isHudControl(e.target)) return;
+          const model = getModel();
+          if (!model || (e.touches.length !== 1 && e.touches.length !== 2)) return;
+          stopEvent(e);
+
+          const group = model.group;
+          const touches = e.touches;
+          gesture = {
+            model,
+            startX: touches[0].clientX,
+            startY: touches[0].clientY,
+            startPosition: group.position.clone(),
+            startScale: group.scale.x,
+            startYaw: group.rotation.y,
+            startDistance: touches.length === 2
+              ? Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY)
+              : 0,
+            startAngle: touches.length === 2 ? touchAngle(touches) : 0,
+            worldPerPixel: getWorldPerPixel(model),
+            mode: touches.length === 2 ? "transform" : "drag"
+          };
+          xr._uiTouchActive = true;
+          xr._pinch.active = true;
+        }
+
+        function onMove(e) {
+          if (!gesture || e.touches.length !== (gesture.mode === "transform" ? 2 : 1)) return;
+          stopEvent(e);
+          const group = gesture.model.group;
+
+          if (gesture.mode === "drag") {
+            const dx = e.touches[0].clientX - gesture.startX;
+            const dy = e.touches[0].clientY - gesture.startY;
+            const camera = xr._camera;
+            const forward = camera.getWorldDirection(new THREE.Vector3());
+            forward.y = 0;
+            if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
+            forward.normalize();
+            const right = new THREE.Vector3(forward.z, 0, -forward.x).normalize();
+            group.position.copy(gesture.startPosition)
+              .addScaledVector(right, dx * gesture.worldPerPixel)
+              .addScaledVector(forward, -dy * gesture.worldPerPixel);
+          } else {
+            const distance = Math.hypot(
+              e.touches[1].clientX - e.touches[0].clientX,
+              e.touches[1].clientY - e.touches[0].clientY
+            );
+            const angle = touchAngle(e.touches);
+            const scale = Math.max(0.05, Math.min(5, gesture.startScale * distance / Math.max(1, gesture.startDistance)));
+            group.scale.setScalar(scale);
+            group.rotation.y = gesture.startYaw + angle - gesture.startAngle;
+          }
+        }
+
+        function onEnd(e) {
+          if (!gesture) return;
+          stopEvent(e);
+          if (!e.touches || e.touches.length === 0) {
+            gesture = null;
+            xr._uiTouchActive = false;
+            xr._pinch.active = false;
+            xr._pinchEndedAt = performance.now();
+            studio._saveScene();
+          }
+        }
+
+        root.addEventListener("touchstart", onStart, { capture: true, passive: false });
+        root.addEventListener("touchmove", onMove, { capture: true, passive: false });
+        root.addEventListener("touchend", onEnd, { capture: true, passive: false });
+        root.addEventListener("touchcancel", onEnd, { capture: true, passive: false });
+      }
+
+      // After the first placement, stop work that only exists to find another
+      // placement. Keep the XR render loop and anchor pose updates so the model
+      // remains locked to the real room.
+      function reduceWorkAfterPlacement(xr) {
+        if (!xr || xr._singleModelOptimized) return;
+        xr._singleModelOptimized = true;
+
+        if (xr._hitTestSource) {
+          try { xr._hitTestSource.cancel(); } catch (error) {
+            console.warn("Could not cancel XR hit-test source:", error);
+          }
+          xr._hitTestSource = null;
+        }
+        xr._latestHit = null;
+        xr._hasHit = false;
+        xr._hadHit = false;
+
+        for (const object of [xr._reticle, xr._pulseRing]) {
+          if (!object) continue;
+          xr._scene.remove(object);
+          object.traverse?.((child) => {
+            child.geometry?.dispose?.();
+            if (Array.isArray(child.material)) child.material.forEach((m) => m.dispose?.());
+            else child.material?.dispose?.();
+          });
+        }
+        xr._reticle = null;
+        xr._reticleRing = null;
+        xr._reticleDot = null;
+        xr._pulseRing = null;
+        xr._pulse.active = false;
+
+        // The scanned object is static: no per-frame mixer/idle animation work.
+        xr._onFrame = null;
+
+        // Depth processing and real-world light estimation are not needed for
+        // this simple single-object viewer.
+        if (xr._depthOcclusion) {
+          xr._depthOcclusion.dispose();
+          xr._depthOcclusion = null;
+        }
+        if (studio.estimatedLight) {
+          studio.estimatedLight.dispose();
+          studio.estimatedLight = null;
+        }
+
+        installArGestures(xr);
+        studio._setStatus("Model placed. Drag with one finger; pinch to resize and twist to rotate.");
+      }
+
+      // Do not even request optional depth-sensing or light-estimation features.
+      // This prevents the AR runtime from enabling those optional pipelines.
+      const originalToggleXR = studio._toggleXR.bind(studio);
+      studio._toggleXR = async function (...args) {
+        const xrApi = navigator.xr;
+        const hadOwnRequestSession = Object.prototype.hasOwnProperty.call(xrApi, "requestSession");
+        const originalRequestSession = xrApi.requestSession;
+        let requestSessionPatched = false;
+
+        try {
+          xrApi.requestSession = function (mode, init = {}) {
+            const options = { ...init };
+            options.optionalFeatures = (init.optionalFeatures || []).filter(
+              (feature) => feature !== "depth-sensing" && feature !== "light-estimation"
+            );
+            delete options.depthSensing;
+            return originalRequestSession.call(this, mode, options);
+          };
+          requestSessionPatched = true;
+        } catch (error) {
+          console.warn("Could not filter optional WebXR features:", error);
+        }
+
+        try {
+          await originalToggleXR(...args);
+        } finally {
+          if (requestSessionPatched) {
+            try {
+              if (hadOwnRequestSession) xrApi.requestSession = originalRequestSession;
+              else delete xrApi.requestSession;
+            } catch (error) {
+              console.warn("Could not restore WebXR requestSession:", error);
+            }
+          }
+        }
+
+        const xr = this.xrSession;
+        if (!xr) return;
+
+        // Keep this in place for the first placement and run it immediately if
+        // the model was already placed before entering AR.
+        if (xr.placedCount > 0) reduceWorkAfterPlacement(xr);
+        const previousOnPlaced = xr._onPlaced;
+        xr._onPlaced = (...placedArgs) => {
+          previousOnPlaced?.(...placedArgs);
+          reduceWorkAfterPlacement(xr);
+        };
+      };
+
       const firstPlacement = await studio.addModel({
         src: "https://mihajamer.github.io/ar-3d-models/test1.glb",
         title: "Test Object 1"
