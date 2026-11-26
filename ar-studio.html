@@ -183,7 +183,7 @@
             forward.y = 0;
             if (forward.lengthSq() < 1e-6) forward.set(0, 0, -1);
             forward.normalize();
-            const right = new THREE.Vector3(forward.z, 0, -forward.x).normalize();
+            const right = new Vector3(forward.z, 0, -forward.x).normalize();
             group.position.copy(gesture.startPosition)
               .addScaledVector(right, dx * gesture.worldPerPixel)
               .addScaledVector(forward, -dy * gesture.worldPerPixel);
