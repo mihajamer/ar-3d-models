@@ -8,7 +8,6 @@
 
   <style>
     * { box-sizing: border-box; }
-
     html, body {
       width: 100%;
       height: 100%;
@@ -17,7 +16,6 @@
       font-family: Arial, sans-serif;
       background: #0b0b0f;
     }
-
     #studio {
       display: block;
       width: 100%;
@@ -25,51 +23,105 @@
       height: 100dvh;
       min-height: 70vh;
     }
+    #startup-error {
+      position: fixed;
+      z-index: 99999;
+      inset: 12px 12px auto;
+      padding: 14px;
+      border-radius: 10px;
+      background: #3b1515;
+      color: white;
+      font: 14px/1.45 Arial, sans-serif;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
   <div id="studio"></div>
+  <div id="startup-error" hidden></div>
 
   <script type="module">
-    import { createArStudio } from "https://unpkg.com/3d-ar-studio@0.3.2/dist/ar-studio.min.js";
+    const errorBox = document.querySelector("#startup-error");
 
-    const studio = createArStudio(document.querySelector("#studio"), {
-      assets: "https://mihajamer.github.io/ar-3d-models/models.json",
-      branding: {
-        title: "Scanned Objects",
-        accent: "#2563eb"
-      },
-      generate: { enabled: false },
-      rooms: { enabled: false },
-      maxPlacements: 1,
-      persist: false,
-      allowUrlOverride: false
-    });
+    function showStartupError(error) {
+      console.error("AR Studio startup failed:", error);
+      errorBox.hidden = false;
+      errorBox.textContent =
+        "AR Studio could not start. Please reload the page.\n\n" +
+        (error?.message || String(error));
+    }
 
-    // The library checks placements.length before awaiting the GLB load.
-    // Reserve a slot immediately so rapid taps cannot start parallel loads.
-    const originalAddModel = studio._addModel.bind(studio);
-    let pendingPlacements = 0;
+    try {
+      // Dynamic import lets us show a useful error instead of a completely
+      // blank page if the CDN bundle cannot be downloaded or evaluated.
+      const { createArStudio } = await import(
+        "https://unpkg.com/3d-ar-studio@0.3.2/dist/ar-studio.min.js"
+      );
 
-    studio._addModel = async function (...args) {
-      if (this.placements.length + pendingPlacements >= 1) {
-        this._setStatus("Scene is full (1 model). Remove it before adding another.", { warn: true });
-        return null;
+      if (typeof createArStudio !== "function") {
+        throw new Error("The AR Studio bundle loaded, but createArStudio was not exported.");
       }
 
-      pendingPlacements += 1;
-      try {
-        return await originalAddModel(...args);
-      } finally {
-        pendingPlacements -= 1;
-      }
-    };
+      const studio = createArStudio(document.querySelector("#studio"), {
+        assets: "https://mihajamer.github.io/ar-3d-models/models.json",
+        branding: {
+          title: "Scanned Objects",
+          accent: "#2563eb"
+        },
+        generate: { enabled: false },
+        rooms: { enabled: false },
+        animations: { enabled: false },
+        lighting: { preset: null },
+        maxPlacements: 1,
+        persist: false,
+        allowUrlOverride: false
+      });
 
-    // Add the initial model through the same guarded path as every later add.
-    studio.addModel({
-      src: "https://mihajamer.github.io/ar-3d-models/test1.glb",
-      title: "Test Object 1"
-    });
+      // Mobile rendering budget:
+      // - cap the drawing buffer at the screen's native CSS resolution;
+      // - disable WebGL shadow maps;
+      // - omit the studio's separate soft contact-shadow mesh.
+      // The studio's normal mobile tier can otherwise use a 1.5x pixel ratio.
+      studio.renderer.setPixelRatio(1);
+      studio.renderer.shadowMap.enabled = false;
+      studio._makeShadow = () => null;
+
+      // maxPlacements is checked by the library before its asynchronous GLB
+      // load. Reserve the single slot while that load is pending, preventing
+      // rapid taps from starting multiple model loads simultaneously.
+      const originalAddModel = studio._addModel.bind(studio);
+      let pendingPlacements = 0;
+
+      studio._addModel = async function (model, options) {
+        const limit = this._maxPlacements;
+        if (this.placements.length + pendingPlacements >= limit) {
+          this._setStatus(
+            "Scene is full (1 model). Remove it before adding another.",
+            { warn: true }
+          );
+          return null;
+        }
+
+        pendingPlacements += 1;
+        try {
+          return await originalAddModel(model, options);
+        } finally {
+          pendingPlacements -= 1;
+        }
+      };
+
+      // Use the same guarded path as the Add tray for the first model.
+      const firstPlacement = await studio.addModel({
+        src: "https://mihajamer.github.io/ar-3d-models/test1.glb",
+        title: "Test Object 1"
+      });
+
+      if (!firstPlacement) {
+        console.warn("The initial model was not placed. Check the model URL and CORS response.");
+      }
+    } catch (error) {
+      showStartupError(error);
+    }
   </script>
 </body>
 </html>
