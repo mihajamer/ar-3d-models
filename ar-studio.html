@@ -132,12 +132,15 @@
       let pendingPlacements = 0;
 
       function setArAddControls(xr, hasFloor = !!xr?._hasHit) {
-        const canAdd = !!xr &&
-          !!hasFloor &&
-          xr.placedCount < 1 &&
-          studio.placements.length < studio._maxPlacements &&
-          !studio._armed?.src &&
-          pendingPlacements === 0;
+        // Outside immersive AR, allow the user to change the prepared model.
+        // Inside AR, unlock Add only while a fresh floor hit is available.
+        const canAdd = !xr
+          ? studio.placements.length < studio._maxPlacements && pendingPlacements === 0
+          : !!hasFloor &&
+            xr.placedCount < 1 &&
+            studio.placements.length < studio._maxPlacements &&
+            !studio._armed?.src &&
+            pendingPlacements === 0;
 
         const controls = [
           studio.ui.addBtn,
@@ -148,10 +151,13 @@
         for (const control of controls) {
           control.disabled = !canAdd;
           control.setAttribute("aria-disabled", String(!canAdd));
-          if (!canAdd) control.title = hasFloor
-            ? "A model is already ready or placed."
-            : "Point at a floor until the placement circle appears.";
-          else control.removeAttribute("title");
+          if (!canAdd && xr && !hasFloor) {
+            control.title = "Point at a floor until the placement circle appears.";
+          } else if (!canAdd) {
+            control.title = "A model is already loading or placed.";
+          } else {
+            control.removeAttribute("title");
+          }
         }
       }
 
@@ -173,7 +179,7 @@
             this._setStatus("Only one model is allowed. Remove it before adding another.", { warn: true });
             return null;
           }
-          if (this._armed?.src) {
+          if (xr && this._armed?.src) {
             this._setStatus("A model is already ready. Tap the placement circle to place it.", { sticky: true });
             return null;
           }
@@ -649,6 +655,18 @@
         // Initial state matters: the session may not have received its first
         // hit-test result by the time the AR transition resolves.
         setArAddControls(xr, !!xr._hasHit);
+        if (xr.placedCount === 0) {
+          if (this._armed?.src) {
+            this._setStatus(xr._hasHit
+              ? "Model ready. Tap the visible placement circle to place it."
+              : "Model ready. Point at a floor until the placement circle appears.");
+          } else {
+            this._setStatus(xr._hasHit
+              ? "Floor detected. Add a model, then tap the placement circle to place it."
+              : "Point at a floor until the placement circle appears. Add will unlock when it is detected.",
+              { sticky: true });
+          }
+        }
         xr._session?.addEventListener("end", () => {
           this._syncArAddControls = null;
           for (const control of [
