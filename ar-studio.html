@@ -465,29 +465,42 @@
           infoPanel.style.display = "none";
         });
 
+        let infoPointCache = null;
+
         function updateInfoMarkers() {
           if (!infoVisible) return;
           const model = getModel();
-          const tpl = model && studio._templatesReady.get(model.src);
-          const bounds = tpl && getModelBounds(tpl);
-          const inner = model?.group?.children?.[0];
-          if (!model || !bounds || !inner) {
+          if (!model) {
             for (const marker of infoMarkers) marker.style.display = "none";
             return;
           }
 
-          const min = bounds.min;
-          const max = bounds.max;
-          const centerX = (min.x + max.x) * 0.5;
-          const centerZ = (min.z + max.z) * 0.5;
-          const height = Math.max(0.001, max.y - min.y);
-          const scale = tpl.fit.scale;
-          const localPoints = [
-            new Vector3(centerX, min.y + height * 0.86, max.z),
-            new Vector3(min.x, min.y + height * 0.56, centerZ),
-            new Vector3(max.x, min.y + height * 0.34, centerZ)
-          ].map((point) => point.multiplyScalar(scale).add(inner.position));
+          if (!infoPointCache || infoPointCache.src !== model.src) {
+            const tpl = studio._templatesReady.get(model.src);
+            const bounds = tpl && getModelBounds(tpl);
+            const inner = model.group.children?.[0];
+            if (!bounds || !inner) {
+              for (const marker of infoMarkers) marker.style.display = "none";
+              return;
+            }
 
+            const min = bounds.min;
+            const max = bounds.max;
+            const centerX = (min.x + max.x) * 0.5;
+            const centerZ = (min.z + max.z) * 0.5;
+            const height = Math.max(0.001, max.y - min.y);
+            const scale = tpl.fit.scale;
+            infoPointCache = {
+              src: model.src,
+              points: [
+                new Vector3(centerX, min.y + height * 0.86, max.z),
+                new Vector3(min.x, min.y + height * 0.56, centerZ),
+                new Vector3(max.x, min.y + height * 0.34, centerZ)
+              ].map((point) => point.multiplyScalar(scale).add(inner.position))
+            };
+          }
+
+          const localPoints = infoPointCache.points;
           const xrCamera = renderer.xr.getCamera(xr._camera);
           const viewCamera = xrCamera.cameras?.[0] || xrCamera;
           viewCamera.updateMatrixWorld(true);
