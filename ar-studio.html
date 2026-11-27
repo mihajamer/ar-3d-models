@@ -53,7 +53,7 @@
 </head>
 <body>
   <div id="studio"></div>
-  <div id="version-label">AR Studio · Version 2</div>
+  <div id="version-label">AR Studio · Version 3</div>
   <div id="startup-error" hidden></div>
 
   <script type="module">
@@ -125,15 +125,36 @@
         studio.renderer.xr.setFramebufferScaleFactor(0.6);
       }
 
-      // Reserve the only model slot while an asynchronous model load is pending.
+      // In WebXR mode, selecting a catalogue item should only load and arm it.
+      // Do not create a preview placement here: _armedContent() creates the one
+      // real placement at the first valid floor-reticle tap. This avoids a
+      // hidden/unanchored preview copy being left beside the AR object.
       const originalAddModel = studio._addModel.bind(studio);
       let pendingPlacements = 0;
-      studio._addModel = async function (model, options) {
+      studio._addModel = async function (model, options = {}) {
         const limit = this._maxPlacements;
         if (this.placements.length + pendingPlacements >= limit) {
           this._setStatus("Only one model is allowed. Remove it before adding another.", { warn: true });
           return null;
         }
+
+        const url = String(model?.src || "").trim();
+        if (this.arMode === "webxr" && !this.xrSession && !options.remote && url) {
+          pendingPlacements += 1;
+          try {
+            await this._loadTemplate(url);
+            this._armed = { src: url, title: String(model?.title || "") };
+            this._setStatus("Model ready. Tap Immersive AR, then tap the floor once to place it.");
+            return null;
+          } catch (error) {
+            console.error("Could not prepare model for AR:", error);
+            this._setStatus("Could not load this model. Check the connection and try again.", { warn: true });
+            return null;
+          } finally {
+            pendingPlacements -= 1;
+          }
+        }
+
         pendingPlacements += 1;
         try {
           return await originalAddModel(model, options);
