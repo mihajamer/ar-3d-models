@@ -53,7 +53,7 @@
 </head>
 <body>
   <div id="studio"></div>
-  <div id="version-label">AR Studio · Version 6</div>
+  <div id="version-label">AR Studio · Version 7</div>
   <div id="startup-error" hidden></div>
 
   <script type="module">
@@ -376,6 +376,73 @@
         });
         root.appendChild(infoToggle);
 
+        // Vertical lift control. Its value is a positive offset from the
+        // original floor anchor, so it can raise the model but never lower
+        // its base through the floor.
+        const heightControl = document.createElement("div");
+        Object.assign(heightControl.style, {
+          position: "absolute",
+          left: "12px",
+          top: "50%",
+          transform: "translateY(-50%)",
+          zIndex: "100002",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "9px",
+          padding: "11px 8px",
+          border: "1px solid rgba(255,255,255,0.28)",
+          borderRadius: "16px",
+          background: "rgba(12,16,25,0.82)",
+          color: "#fff",
+          font: "600 10px Arial, sans-serif",
+          pointerEvents: "auto",
+          touchAction: "none"
+        });
+        const heightLabel = document.createElement("div");
+        heightLabel.textContent = "HEIGHT";
+        const heightValue = document.createElement("div");
+        heightValue.textContent = "0 cm";
+        const heightSlider = document.createElement("input");
+        heightSlider.type = "range";
+        heightSlider.min = "0";
+        heightSlider.max = "200";
+        heightSlider.step = "1";
+        heightSlider.value = "0";
+        heightSlider.setAttribute("aria-label", "Raise model above floor");
+        Object.assign(heightSlider.style, {
+          appearance: "slider-vertical",
+          WebkitAppearance: "slider-vertical",
+          writingMode: "vertical-lr",
+          direction: "rtl",
+          width: "30px",
+          height: "190px",
+          margin: "0",
+          padding: "0",
+          accentColor: "#60a5fa",
+          touchAction: "none",
+          cursor: "pointer"
+        });
+        heightControl.append(heightLabel, heightSlider, heightValue);
+        root.appendChild(heightControl);
+
+        function setModelHeightFromSlider(save = false) {
+          const model = getModel();
+          const placement = model && xr._placements?.find((item) => item.group === model.group);
+          if (!placement) return;
+          if (!placement._userOffset) placement._userOffset = new Vector3();
+          const heightCm = Number(heightSlider.value);
+          placement._userOffset.y = heightCm / 100;
+          heightValue.textContent = heightCm === 0 ? "0 cm" : `${heightCm} cm`;
+          if (save) {
+            model.group.position.add(placement._userOffset);
+            try { studio._saveScene(); }
+            finally { model.group.position.sub(placement._userOffset); }
+          }
+        }
+        heightSlider.addEventListener("input", () => setModelHeightFromSlider(false));
+        heightSlider.addEventListener("change", () => setModelHeightFromSlider(true));
+
         const infoPanel = document.createElement("div");
         Object.assign(infoPanel.style, {
           position: "absolute",
@@ -566,6 +633,7 @@
           if (renderer.render === anchoredRender) renderer.render = originalRender;
           perfBadge?.remove();
           infoToggle.remove();
+          heightControl.remove();
           infoPanel.remove();
           for (const marker of infoMarkers) marker.remove();
         }, { once: true });
