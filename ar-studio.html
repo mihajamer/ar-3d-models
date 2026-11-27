@@ -53,7 +53,7 @@
 </head>
 <body>
   <div id="studio"></div>
-  <div id="version-label">AR Studio · Version 5</div>
+  <div id="version-label">AR Studio · Version 6</div>
   <div id="startup-error" hidden></div>
 
   <script type="module">
@@ -132,9 +132,9 @@
       // lowest point on the floor. The upstream placement group is anchored at
       // the hit-test point; without this offset, off-centre GLB origins swing
       // around that floor point when the user twists the model.
-      function getHorizontalModelCenter(tpl) {
+      function getModelBounds(tpl) {
         const source = tpl?.gltf?.scene;
-        if (!source) return { x: 0, z: 0 };
+        if (!source) return null;
 
         source.updateMatrixWorld(true);
         const Vector = studio.camera.position.constructor;
@@ -165,8 +165,13 @@
           }
         });
 
-        return found
-          ? { x: (min.x + max.x) * 0.5, z: (min.z + max.z) * 0.5 }
+        return found ? { min, max } : null;
+      }
+
+      function getHorizontalModelCenter(tpl) {
+        const bounds = getModelBounds(tpl);
+        return bounds
+          ? { x: (bounds.min.x + bounds.max.x) * 0.5, z: (bounds.min.z + bounds.max.z) * 0.5 }
           : { x: 0, z: 0 };
       }
 
@@ -334,6 +339,175 @@
         let perfFrames = 0;
         let perfWindowStart = performance.now();
 
+        // Lightweight DOM information markers. Their positions are projected
+        // from model-local coordinates each XR frame, so they follow drag,
+        // rotation, scaling and the room anchor without adding 3D draw calls.
+        const infoItems = [
+          {
+            title: "Outer shell",
+            body: "The outer shell is made from a lightweight composite to reduce the model's overall mass."
+          },
+          {
+            title: "Airflow channel",
+            body: "This section is shaped to guide airflow around the central assembly."
+          },
+          {
+            title: "Surface finish",
+            body: "The fine surface texture is designed to make small scratches less noticeable."
+          }
+        ];
+
+        const infoToggle = document.createElement("button");
+        infoToggle.type = "button";
+        infoToggle.textContent = "ⓘ Info";
+        Object.assign(infoToggle.style, {
+          position: "absolute",
+          right: "14px",
+          bottom: "calc(env(safe-area-inset-bottom, 0px) + 82px)",
+          zIndex: "100002",
+          padding: "11px 15px",
+          border: "1px solid rgba(255,255,255,0.35)",
+          borderRadius: "22px",
+          background: "rgba(12,16,25,0.88)",
+          color: "#fff",
+          font: "600 14px Arial, sans-serif",
+          pointerEvents: "auto",
+          touchAction: "manipulation"
+        });
+        root.appendChild(infoToggle);
+
+        const infoPanel = document.createElement("div");
+        Object.assign(infoPanel.style, {
+          position: "absolute",
+          left: "50%",
+          bottom: "calc(env(safe-area-inset-bottom, 0px) + 132px)",
+          transform: "translateX(-50%)",
+          width: "min(290px, calc(100vw - 32px))",
+          zIndex: "100003",
+          padding: "14px 42px 14px 15px",
+          border: "1px solid rgba(255,255,255,0.22)",
+          borderRadius: "12px",
+          background: "rgba(12,16,25,0.94)",
+          color: "#fff",
+          font: "14px/1.4 Arial, sans-serif",
+          pointerEvents: "auto",
+          boxShadow: "0 4px 18px rgba(0,0,0,0.25)",
+          display: "none"
+        });
+
+        const infoTitle = document.createElement("div");
+        Object.assign(infoTitle.style, { fontWeight: "700", marginBottom: "5px" });
+        const infoBody = document.createElement("div");
+        Object.assign(infoBody.style, { opacity: "0.92" });
+        const infoClose = document.createElement("button");
+        infoClose.type = "button";
+        infoClose.textContent = "×";
+        Object.assign(infoClose.style, {
+          position: "absolute",
+          top: "5px",
+          right: "8px",
+          border: "0",
+          background: "transparent",
+          color: "#fff",
+          font: "24px/1 Arial, sans-serif",
+          padding: "4px 7px",
+          pointerEvents: "auto"
+        });
+        infoPanel.append(infoTitle, infoBody, infoClose);
+        root.appendChild(infoPanel);
+
+        const infoMarkers = infoItems.map((item, index) => {
+          const marker = document.createElement("button");
+          marker.type = "button";
+          marker.textContent = String(index + 1);
+          marker.setAttribute("aria-label", `Show information: ${item.title}`);
+          Object.assign(marker.style, {
+            position: "absolute",
+            left: "0",
+            top: "0",
+            transform: "translate(-50%, -50%)",
+            width: "36px",
+            height: "36px",
+            border: "2px solid #fff",
+            borderRadius: "50%",
+            background: "#2563eb",
+            color: "#fff",
+            font: "700 14px Arial, sans-serif",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.45)",
+            zIndex: "100001",
+            pointerEvents: "auto",
+            display: "none",
+            touchAction: "manipulation"
+          });
+          marker.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            infoTitle.textContent = item.title;
+            infoBody.textContent = item.body;
+            infoPanel.style.display = "block";
+          });
+          root.appendChild(marker);
+          return marker;
+        });
+
+        let infoVisible = false;
+        infoToggle.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          infoVisible = !infoVisible;
+          for (const marker of infoMarkers) marker.style.display = infoVisible ? "block" : "none";
+          if (!infoVisible) infoPanel.style.display = "none";
+          infoToggle.textContent = infoVisible ? "✕ Hide info" : "ⓘ Info";
+        });
+        infoClose.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          infoPanel.style.display = "none";
+        });
+
+        function updateInfoMarkers() {
+          if (!infoVisible) return;
+          const model = getModel();
+          const tpl = model && studio._templatesReady.get(model.src);
+          const bounds = tpl && getModelBounds(tpl);
+          const inner = model?.group?.children?.[0];
+          if (!model || !bounds || !inner) {
+            for (const marker of infoMarkers) marker.style.display = "none";
+            return;
+          }
+
+          const min = bounds.min;
+          const max = bounds.max;
+          const centerX = (min.x + max.x) * 0.5;
+          const centerZ = (min.z + max.z) * 0.5;
+          const height = Math.max(0.001, max.y - min.y);
+          const scale = tpl.fit.scale;
+          const localPoints = [
+            new Vector3(centerX, min.y + height * 0.86, max.z),
+            new Vector3(min.x, min.y + height * 0.56, centerZ),
+            new Vector3(max.x, min.y + height * 0.34, centerZ)
+          ].map((point) => point.multiplyScalar(scale).add(inner.position));
+
+          const xrCamera = renderer.xr.getCamera(xr._camera);
+          const viewCamera = xrCamera.cameras?.[0] || xrCamera;
+          viewCamera.updateMatrixWorld(true);
+          model.group.updateMatrixWorld(true);
+          const rect = root.getBoundingClientRect();
+
+          localPoints.forEach((localPoint, index) => {
+            const projected = model.group.localToWorld(localPoint.clone()).project(viewCamera);
+            const visible = projected.z >= -1 && projected.z <= 1 &&
+              projected.x >= -1.15 && projected.x <= 1.15 &&
+              projected.y >= -1.15 && projected.y <= 1.15;
+            const marker = infoMarkers[index];
+            marker.style.display = visible ? "block" : "none";
+            if (visible) {
+              marker.style.left = `${(projected.x * 0.5 + 0.5) * rect.width}px`;
+              marker.style.top = `${(-projected.y * 0.5 + 0.5) * rect.height}px`;
+            }
+          });
+        }
+
         const originalRender = renderer.render;
         const anchoredRender = function (scene, camera) {
           const shifted = [];
@@ -348,6 +522,7 @@
           }
           try {
             const result = originalRender.call(this, scene, camera);
+            updateInfoMarkers();
             const now = performance.now();
             perfFrames += 1;
             if (now - perfWindowStart >= 1000) {
@@ -377,6 +552,9 @@
         xr._session?.addEventListener("end", () => {
           if (renderer.render === anchoredRender) renderer.render = originalRender;
           perfBadge?.remove();
+          infoToggle.remove();
+          infoPanel.remove();
+          for (const marker of infoMarkers) marker.remove();
         }, { once: true });
         const getModel = () => studio.placements[studio.placements.length - 1] || null;
         const isHudControl = (target) => !!target?.closest?.(
