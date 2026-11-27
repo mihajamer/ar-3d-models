@@ -53,7 +53,7 @@
 </head>
 <body>
   <div id="studio"></div>
-  <div id="version-label">AR Studio · Version 7</div>
+  <div id="version-label">AR Studio · Version 7.1</div>
   <div id="startup-error" hidden></div>
 
   <script type="module">
@@ -399,9 +399,6 @@
           pointerEvents: "auto",
           touchAction: "none"
         });
-        const heightLabel = document.createElement("div");
-        heightLabel.textContent = "HEIGHT";
-        const heightValue = document.createElement("div");
         heightValue.textContent = "0 cm";
         const heightSlider = document.createElement("input");
         heightSlider.type = "range";
@@ -423,7 +420,7 @@
           touchAction: "none",
           cursor: "pointer"
         });
-        heightControl.append(heightLabel, heightSlider, heightValue);
+        heightControl.append(heightSlider);
         root.appendChild(heightControl);
 
         function setModelHeightFromSlider(save = false) {
@@ -433,7 +430,6 @@
           if (!placement._userOffset) placement._userOffset = new Vector3();
           const heightCm = Number(heightSlider.value);
           placement._userOffset.y = heightCm / 100;
-          heightValue.textContent = heightCm === 0 ? "0 cm" : `${heightCm} cm`;
           if (save) {
             model.group.position.add(placement._userOffset);
             try { studio._saveScene(); }
