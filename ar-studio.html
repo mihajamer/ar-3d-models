@@ -53,7 +53,7 @@
 </head>
 <body>
   <div id="studio"></div>
-  <div id="version-label">AR Studio · Version 3</div>
+  <div id="version-label">AR Studio · Version 4</div>
   <div id="startup-error" hidden></div>
 
   <script type="module">
@@ -125,26 +125,79 @@
         studio.renderer.xr.setFramebufferScaleFactor(0.6);
       }
 
-      // In WebXR mode, selecting a catalogue item should only load and arm it.
-      // Do not create a preview placement here: _armedContent() creates the one
-      // real placement at the first valid floor-reticle tap. This avoids a
-      // hidden/unanchored preview copy being left beside the AR object.
+      // WebXR is a two-step operation: prepare a model, then place that exact
+      // model only after the live floor hit-test has produced the reticle.
+      // Never create an ordinary preview placement while using the WebXR flow.
       const originalAddModel = studio._addModel.bind(studio);
       let pendingPlacements = 0;
-      studio._addModel = async function (model, options = {}) {
-        const limit = this._maxPlacements;
-        if (this.placements.length + pendingPlacements >= limit) {
-          this._setStatus("Only one model is allowed. Remove it before adding another.", { warn: true });
-          return null;
-        }
 
+      function setArAddControls(xr, hasFloor = !!xr?._hasHit) {
+        const canAdd = !!xr &&
+          !!hasFloor &&
+          xr.placedCount < 1 &&
+          studio.placements.length < studio._maxPlacements &&
+          !studio._armed?.src &&
+          pendingPlacements === 0;
+
+        const controls = [
+          studio.ui.addBtn,
+          studio.ui.emptyAdd,
+          ...((studio.ui.root?.querySelectorAll(".ars-item-add")) || [])
+        ].filter(Boolean);
+
+        for (const control of controls) {
+          control.disabled = !canAdd;
+          control.setAttribute("aria-disabled", String(!canAdd));
+          if (!canAdd) control.title = hasFloor
+            ? "A model is already ready or placed."
+            : "Point at a floor until the placement circle appears.";
+          else control.removeAttribute("title");
+        }
+      }
+
+      studio._addModel = async function (model, options = {}) {
         const url = String(model?.src || "").trim();
-        if (this.arMode === "webxr" && !this.xrSession && !options.remote && url) {
+        const useWebXRFlow = this.arMode === "webxr" || !!this.xrSession;
+
+        if (useWebXRFlow && !options.remote && url) {
+          const xr = this.xrSession;
+
+          if (xr && !xr._hasHit) {
+            this._setStatus("Point at a floor until the placement circle appears. You can add a model once it is visible.", {
+              warn: true, sticky: true
+            });
+            return null;
+          }
+          if (this.placements.length + pendingPlacements >= this._maxPlacements ||
+              (xr?.placedCount || 0) >= 1) {
+            this._setStatus("Only one model is allowed. Remove it before adding another.", { warn: true });
+            return null;
+          }
+          if (this._armed?.src) {
+            this._setStatus("A model is already ready. Tap the placement circle to place it.", { sticky: true });
+            return null;
+          }
+
           pendingPlacements += 1;
+          setArAddControls(xr, !!xr?._hasHit);
           try {
             await this._loadTemplate(url);
+
+            // The floor must still be detected when loading finishes. Otherwise
+            // leave the model unarmed so the user cannot add something that
+            // currently has nowhere valid to be placed.
+            if (this.xrSession && !this.xrSession._hasHit) {
+              this._setStatus("The floor was lost while loading. Wait for the placement circle, then add the model again.", {
+                warn: true, sticky: true
+              });
+              return null;
+            }
+
             this._armed = { src: url, title: String(model?.title || "") };
-            this._setStatus("Model ready. Tap Immersive AR, then tap the floor once to place it.");
+            this._setStatus(this.xrSession
+              ? "Model ready. Tap the visible placement circle to place it."
+              : "Model ready. Enter AR, wait for the placement circle, then tap it once.");
+            setArAddControls(this.xrSession, !!this.xrSession?._hasHit);
             return null;
           } catch (error) {
             console.error("Could not prepare model for AR:", error);
@@ -152,6 +205,7 @@
             return null;
           } finally {
             pendingPlacements -= 1;
+            setArAddControls(this.xrSession, !!this.xrSession?._hasHit);
           }
         }
 
@@ -381,8 +435,8 @@
             const dx = e.touches[0].clientX - gesture.startX;
             const dy = e.touches[0].clientY - gesture.startY;
             const movement = gesture.drag.right.clone()
-              .multiplyScalar(dx * gesture.drag.metresPerPixel)
-              .addScaledVector(gesture.drag.screenUp, -dy * gesture.drag.metresPerPixel);
+              .multiplyScalar(dx * gesture.drag.metresPerPixel * 1.7)
+              .addScaledVector(gesture.drag.screenUp, -dy * gesture.drag.metresPerPixel * 1.7);
             movement.y = 0;
             // Translation is derived only from finger displacement since
             // touchstart, using a frozen world-space basis. Phone/camera
@@ -556,6 +610,32 @@
         const xr = this.xrSession;
         if (!xr) return;
 
+        // The Add controls stay locked until the hit-test has a live floor
+        // result (the visible placement circle). They lock again once a model
+        // is armed or placed, preventing out-of-order commands.
+        this._syncArAddControls = (hasFloor = !!xr._hasHit) => {
+          setArAddControls(xr, hasFloor);
+        };
+        const previousOnHit = xr._onHit;
+        xr._onHit = (hasFloor) => {
+          previousOnHit?.(hasFloor);
+          setArAddControls(xr, hasFloor);
+
+          if (this._armed?.src && !hasFloor) {
+            this._setStatus("Floor not detected. Point at the floor until the placement circle returns.", {
+              warn: true, sticky: true
+            });
+          } else if (this._armed?.src && hasFloor) {
+            this._setStatus("Model ready. Tap the visible placement circle to place it.", { sticky: true });
+          } else if (hasFloor && xr.placedCount === 0) {
+            this._setStatus("Floor detected. Add a model, then tap the placement circle to place it.", { sticky: true });
+          } else if (!hasFloor && xr.placedCount === 0) {
+            this._setStatus("Point at a floor until the placement circle appears. Add will unlock when it is detected.", {
+              sticky: true
+            });
+          }
+        };
+
         // Keep this in place for the first placement and run it immediately if
         // the model was already placed before entering AR.
         if (xr.placedCount > 0) reduceWorkAfterPlacement(xr);
@@ -563,7 +643,26 @@
         xr._onPlaced = (...placedArgs) => {
           previousOnPlaced?.(...placedArgs);
           reduceWorkAfterPlacement(xr);
+          setArAddControls(xr, false);
         };
+
+        // Initial state matters: the session may not have received its first
+        // hit-test result by the time the AR transition resolves.
+        setArAddControls(xr, !!xr._hasHit);
+        xr._session?.addEventListener("end", () => {
+          this._syncArAddControls = null;
+          for (const control of [
+            this.ui.addBtn,
+            this.ui.emptyAdd,
+            ...(this.ui.root?.querySelectorAll(".ars-item-add") || [])
+          ]) {
+            if (control) {
+              control.disabled = false;
+              control.removeAttribute("aria-disabled");
+              control.removeAttribute("title");
+            }
+          }
+        }, { once: true });
       };
 
       // Start with an empty scene. The user chooses the model from the catalogue
