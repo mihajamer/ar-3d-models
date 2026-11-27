@@ -626,7 +626,7 @@
             markerWorldNormal.copy(infoPointCache.normals[index]).applyQuaternion(markerQuaternion);
             const facesCamera = markerWorldNormal.dot(
               cameraToMarker.copy(cameraWorldPosition).sub(markerWorldPosition)
-            ) > 0;
+            ) > -0.15;
             projectedMarker.copy(markerWorldPosition).project(viewCamera);
             const inView = projectedMarker.z >= -1 && projectedMarker.z <= 1 &&
               projectedMarker.x >= -1.15 && projectedMarker.x <= 1.15 &&
