@@ -53,7 +53,7 @@
 </head>
 <body>
   <div id="studio"></div>
-  <div id="version-label">AR Studio · Version 7.3</div>
+  <div id="version-label">AR Studio · Version 7.4</div>
   <div id="startup-error" hidden></div>
 
   <script type="module">
@@ -376,27 +376,35 @@
         });
         root.appendChild(infoToggle);
 
-        // Vertical lift control. Its value is a positive offset from the
-        // original floor anchor, so it can raise the model but never lower
-        // its base through the floor.
+        // Retractable height control; the slider remains available behind
+        // a small edge tab and retains its current value while collapsed.
         const heightControl = document.createElement("div");
         Object.assign(heightControl.style, {
           position: "absolute",
-          left: "12px",
+          left: "0",
           top: "50%",
-          transform: "translateY(-50%)",
+          transform: "translate(-100%, -50%)",
           zIndex: "100002",
+          display: "flex",
+          alignItems: "center",
+          gap: "0",
+          pointerEvents: "auto",
+          touchAction: "none",
+          transition: "transform 180ms ease"
+        });
+        const heightPanel = document.createElement("div");
+        Object.assign(heightPanel.style, {
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
           gap: "9px",
           padding: "11px 8px",
           border: "1px solid rgba(255,255,255,0.28)",
-          borderRadius: "16px",
+          borderRight: "0",
+          borderRadius: "0 0 0 0",
           background: "rgba(12,16,25,0.82)",
           color: "#fff",
           font: "600 10px Arial, sans-serif",
-          pointerEvents: "auto",
           touchAction: "none"
         });
         const heightLabel = document.createElement("div");
@@ -421,8 +429,37 @@
           touchAction: "none",
           cursor: "pointer"
         });
-        heightControl.append(heightLabel, heightSlider);
+        heightPanel.append(heightLabel, heightSlider);
+        const heightToggle = document.createElement("button");
+        heightToggle.type = "button";
+        heightToggle.textContent = "›";
+        heightToggle.setAttribute("aria-label", "Open height slider");
+        Object.assign(heightToggle.style, {
+          width: "34px",
+          height: "58px",
+          padding: "0",
+          border: "1px solid rgba(255,255,255,0.28)",
+          borderLeft: "0",
+          borderRadius: "0 12px 12px 0",
+          background: "rgba(12,16,25,0.9)",
+          color: "#fff",
+          font: "24px Arial, sans-serif",
+          pointerEvents: "auto",
+          touchAction: "manipulation"
+        });
+        heightControl.append(heightPanel, heightToggle);
         root.appendChild(heightControl);
+        let heightOpen = false;
+        heightToggle.addEventListener("click", (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          heightOpen = !heightOpen;
+          heightControl.style.transform = heightOpen
+            ? "translate(0, -50%)"
+            : "translate(calc(-100% + 34px), -50%)";
+          heightToggle.textContent = heightOpen ? "‹" : "›";
+          heightToggle.setAttribute("aria-label", heightOpen ? "Close height slider" : "Open height slider");
+        });
 
         function setModelHeightFromSlider(save = false) {
           const model = getModel();
@@ -530,6 +567,12 @@
         });
 
         let infoPointCache = null;
+        const markerWorldPosition = new Vector3();
+        const markerWorldNormal = new Vector3();
+        const cameraToMarker = new Vector3();
+        const cameraWorldPosition = new Vector3();
+        const markerQuaternion = new xr._camera.quaternion.constructor();
+        const projectedMarker = new Vector3();
 
         function updateInfoMarkers() {
           if (!infoVisible) return;
@@ -560,7 +603,12 @@
                 new Vector3(centerX, min.y + height * 0.86, max.z),
                 new Vector3(min.x, min.y + height * 0.56, centerZ),
                 new Vector3(max.x, min.y + height * 0.34, centerZ)
-              ].map((point) => point.multiplyScalar(scale).add(inner.position))
+              ].map((point) => point.multiplyScalar(scale).add(inner.position)),
+              normals: [
+                new Vector3(0, 0, 1),
+                new Vector3(-1, 0, 0),
+                new Vector3(1, 0, 0)
+              ]
             };
           }
 
@@ -569,18 +617,26 @@
           const viewCamera = xrCamera.cameras?.[0] || xrCamera;
           viewCamera.updateMatrixWorld(true);
           model.group.updateMatrixWorld(true);
+          viewCamera.getWorldPosition(cameraWorldPosition);
+          model.group.getWorldQuaternion(markerQuaternion);
           const rect = root.getBoundingClientRect();
 
           localPoints.forEach((localPoint, index) => {
-            const projected = model.group.localToWorld(localPoint.clone()).project(viewCamera);
-            const visible = projected.z >= -1 && projected.z <= 1 &&
-              projected.x >= -1.15 && projected.x <= 1.15 &&
-              projected.y >= -1.15 && projected.y <= 1.15;
+            markerWorldPosition.copy(localPoint).applyMatrix4(model.group.matrixWorld);
+            markerWorldNormal.copy(infoPointCache.normals[index]).applyQuaternion(markerQuaternion);
+            const facesCamera = markerWorldNormal.dot(
+              cameraToMarker.copy(cameraWorldPosition).sub(markerWorldPosition)
+            ) > 0;
+            projectedMarker.copy(markerWorldPosition).project(viewCamera);
+            const inView = projectedMarker.z >= -1 && projectedMarker.z <= 1 &&
+              projectedMarker.x >= -1.15 && projectedMarker.x <= 1.15 &&
+              projectedMarker.y >= -1.15 && projectedMarker.y <= 1.15;
+            const visible = facesCamera && inView;
             const marker = infoMarkers[index];
             marker.style.display = visible ? "block" : "none";
             if (visible) {
-              marker.style.left = `${(projected.x * 0.5 + 0.5) * rect.width}px`;
-              marker.style.top = `${(-projected.y * 0.5 + 0.5) * rect.height}px`;
+              marker.style.left = `${(projectedMarker.x * 0.5 + 0.5) * rect.width}px`;
+              marker.style.top = `${(-projectedMarker.y * 0.5 + 0.5) * rect.height}px`;
             }
           });
         }
